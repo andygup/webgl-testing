@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta
+            name="viewport"
+            content="initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <title>WebGL Test 4.x</title>
+
+    <link
+            rel="stylesheet"
+            href="https://jsdev.arcgis.com/4.12/esri/themes/light/main.css"
+    />
+    <script src=" https://jsdev.arcgis.com/4.12/"></script>
+
+    <style>
+        html,
+        body,
+        #viewDiv {
+            padding: 0;
+            margin: 0;
+            height: 100%;
+            width: 100%;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        body {
+            background-color: lightgray;
+        }
+
+        #sliderContainer {
+            width: 200px;
+            float: right;
+            padding: 10px;
+        }
+
+        #slider-1 {
+            width: 100%;
+        }
+    </style>
+
+    <script>
+
+      let extentCountDiv = null;
+      let numberGraphicsDiv = null;
+      let zoomDiv = null;
+      let testResultDiv = null;
+      let flUpdateResultDiv = null;
+      let webGLDiv = null;
+
+      let killfps = 0, fps = 0, times = [], average = [], minFps = 0, maxFps = 0;
+      let requestAnimation = null, divFPS = null;
+
+      // Run timer on a background thread
+      let timerWorker = new Worker('./js/timer-worker.js');
+
+      const panFactor = 0.75;
+      const panControllerDelay = 750; //ms
+
+      require([
+        "esri/Map",
+        "esri/geometry/Extent",
+        "esri/views/MapView",
+        "esri/tasks/support/Query",
+        "esri/layers/FeatureLayer",
+        "esri/core/watchUtils",
+        "esri/geometry/geometryEngine",
+        "esri/geometry/support/webMercatorUtils"
+      ], function(Map, Extent, MapView, Query, FeatureLayer, watchUtils, geometryEngine, webMercatorUtils) {
+        let map = new Map({
+          basemap: "streets-night-vector"
+        });
+
+        webGLDiv = document.getElementById("div-webgl-check");
+
+        let view = new MapView({
+          container: "viewDiv",
+          map: map,
+          center: [-82.44109, 35.6122],
+          zoom: 10
+        });
+
+        /********************
+         * Add feature layer
+         ********************/
+
+        let renderer = {
+          type: "simple",  // autocasts as new SimpleRenderer()
+          symbol: {
+            type: "simple-marker",  // autocasts as new SimpleMarkerSymbol()
+            size: 6,
+            color: "black",
+            outline: {  // autocasts as new SimpleLineSymbol()
+              width: 0.5,
+              color: "white"
+            }
+          }
+        };
+
+        let featureLayer = new FeatureLayer({
+            url: "https://services.arcgis.com/uCXeTVveQzP4IIcx/arcgis/rest/services/POI/FeatureServer/0",
+            renderer: renderer
+          });
+
+        map.add(featureLayer);
+
+        view.when(() => {
+
+          webGLDiv.style.background = "green";
+          webGLDiv.innerText = "WebGL: Enabled";
+          view.whenLayerView(featureLayer).then(function(layerView){
+
+            let time1 = null;
+
+            layerView.watch("updating", function(value){
+
+              if(!value) {
+                updateInfoDivs();
+                if(featureLayer) {
+                    updateFLUpdateResultDiv(time1);
+                    console.log("finished updating");
+                }
+              }
+              else {
+                console.log("FL updating");
+                time1 = performance.now();
+                flUpdateResultDiv.innerText = "FL update: --";
+              }
+            });
+          })
+            .catch(() => {
+              // WebGL not available
+              webGLDiv.style.background = "yellow";
+              webGLDiv.innerText = "WebGL: Disabled";
+            });
+
+          extentCountDiv = document.getElementById("div-number-graphics-in-extent");
+          numberGraphicsDiv = document.getElementById("div-number-graphics");
+          zoomDiv = document.getElementById("div-zoom-level");
+          divFPS = document.getElementById("div-fps");
+          testResultDiv = document.getElementById("div-test-result");
+          flUpdateResultDiv = document.getElementById("div-fl-update-result");
+
+          document.getElementById("slider-1").addEventListener("input", (c) => {
+            console.log(c.target.value);
+            renderer.symbol.size = c.target.value;
+            featureLayer.renderer = renderer;
+          });
+
+
+          document.getElementById("btn-reset").addEventListener("click", () => {
+            view.center = [-82.44109, 35.6122];
+            view.zoom = 10;
+          });
+
+          document.getElementById("btn-pan-once").addEventListener("click", () => {
+            const time0 = performance.now();
+            testResultDiv.innerText = "Pan/zoom: --";
+
+            panController(/* pan left */ view.width * - panFactor, 0).then(() => {
+              updateTestResultDiv(time0);
+            });
+          });
+
+          document.getElementById("btn-pan-zoom").addEventListener("click", () => {
+            const time0 = performance.now();
+            testResultDiv.innerText = "Pan/zoom: --";
+
+            view.goTo({
+              zoom: view.zoom - 1
+            }).then(() => {
+              panController(/* pan left */ view.width * - panFactor, 0).then(() => {
+                updateTestResultDiv(time0);
+              });
+            })
+          });
+
+          document.getElementById("btn-zoom-once").addEventListener("click", () => {
+            const time0 = performance.now();
+            testResultDiv.innerText = "Pan/zoom: --";
+
+            view.goTo({
+              zoom: view.zoom - 1
+            }).then(() => {
+              updateTestResultDiv(time0);
+            })
+          });
+
+          document.getElementById("btn-pan-pan").addEventListener("click", () => {
+            runPanNavigationPath();
+          });
+
+          fpsRefreshLoop();
+
+          timerWorker.postMessage(["start", 1000]);
+          timerWorker.onmessage = (msg) => {
+            minmaxSnapshot(average);
+          };
+        });
+
+        function panController(x, y){
+
+          let handle = null;
+          let promise = new Promise((resolve) => {
+
+            // Listen for extent change
+            handle = watchUtils.whenTrue(view, "stationary", function() {
+              if(handle){
+                handle.remove();
+
+                // Set a delay to simulate a user action
+                setTimeout(() => {
+                  resolve()
+                }, panControllerDelay);
+
+              }
+            });
+
+            const sp = {
+              x: (view.width / 2) + x,
+              y: (view.height / 2) + y
+            };
+
+            const mapPt = view.toMap(sp);
+
+            const xmin = mapPt.x - (view.extent.width / 2);
+            const ymin = mapPt.y - (view.extent.height / 2);
+
+            const targetExtent = new Extent({
+              "xmin": xmin,
+              "ymin": ymin,
+              "xmax": xmin + view.extent.width,
+              "ymax": ymin + view.extent.height,
+              "spatialReference": view.spatialReference
+
+            });
+
+            view.extent = targetExtent;
+          });
+
+
+          return promise;
+        }
+
+        function runPanNavigationPath(){
+          const time0 = performance.now();
+
+          panController(/* pan lower left */ view.width * - panFactor, view.height * panFactor).then(() => {
+              console.log("pan lower left");
+                panController(/* pan up */ 0, view.height * - panFactor).then(() => {
+                  console.log("pan up");
+                  panController(/* pan right */ view.width * panFactor, 0).then(() => {
+                    console.log("pan right");
+                    updateTestResultDiv(time0);
+                  });
+                });
+          });
+        }
+
+        function updateTestResultDiv(time0){
+          testResultDiv.innerText = "Pan/zoom: " + (performance.now() - time0).toFixed(0) + "ms";
+        }
+
+        function updateFLUpdateResultDiv(time0){
+          flUpdateResultDiv.innerText = "FL update: " + (performance.now() - time0).toFixed(0) + "ms";
+        }
+
+        function updateInfoDivs(){
+
+          graphicsCountInExtent(view.extent.clone(), (count) => {
+            extentCountDiv.innerText = "Graphics in extent: " + count;
+          });
+
+          zoomDiv.innerText = "Zoom: " + view.zoom;
+
+          graphicsCountTotal((count) => {
+            numberGraphicsDiv.innerText = "Graphics count: " + count;
+          });
+        }
+
+        function fpsRefreshLoop() {
+          if (killfps === 0) {
+            requestAnimation = window.requestAnimationFrame(() => {
+              const now = performance.now();
+              while (times.length > 0 && times[0] <= now - 1000) {
+                times.shift();
+              }
+              times.push(now);
+              fps = times.length;
+              divFPS.innerText = "fps: " + averageFps(fps) + "/" + maxFps + "/" + minFps;
+              fpsRefreshLoop();
+            });
+          }
+        }
+
+        function averageFps(v) {
+          if (average.length > 60) {
+            average.pop();
+          }
+
+          average.unshift(v);
+
+          let sum = average.reduce(function (sum, value) {
+            return sum + value;
+          }, 0);
+
+          const avg = sum / average.length;
+
+          return isNaN(avg) ? 0 : Math.round(avg);
+        }
+
+        function minmaxSnapshot(average) {
+          minFps = Math.min.apply(null, average);
+          maxFps = Math.max.apply(null, average);
+        }
+
+        function graphicsCountTotal(callback) {
+          view.whenLayerView(featureLayer).then(function(layerView){
+            return layerView.queryFeatureCount()
+          }).then(function(count){
+            callback(count);  // prints the total number of client-side graphics to the console
+          });
+        }
+
+        function graphicsCountInExtent(extent, callback) {
+          const extentArray = extent.normalize();
+
+          let query = new Query();
+          query.geometry = extentArray[0];
+          query.spatialRelationship = "contains";
+
+          view.whenLayerView(featureLayer).then(function(layerView){
+                layerView.queryFeatures(query).then(function(results) {
+                  callback(results.features.length);  // prints the array of client-side graphics to the console
+                });
+          });
+        }
+
+      });
+    </script>
+</head>
+
+<body>
+<div id="header" style="height: 40px;">
+    <div id="div-number-graphics-in-extent" style="float: right; padding: 10px;">Graphics in extent: 0</div>
+    <div id="div-number-graphics" style="float: right; padding: 10px;">Graphics count: 0</div>
+    <div id="div-zoom-level" style="float: right; padding: 10px;">Zoom: 0</div>
+    <div id="div-webgl-check" style="float: left; padding: 10px;">WebGL: false</div>
+</div>
+<div id="header2" style="height: 40px;">
+    <div id="div-test-result" style="float: left; padding: 10px;">Pan/zoom: --</div>
+    <div id="div-fl-update-result" style="float: left; padding: 10px;">FL update: --</div>
+    <div id="div-fps" style="float: left; padding: 10px;">fps = 0</div>
+    <div id="sliderContainer">
+        <input id="slider-1" type="range" min="0.5" max="10" value="0.5" step="0.1">
+    </div>
+    <button id="btn-reset" style="float: right; height: 30px; margin: 5px;">Reset Map</button>
+    <button id="btn-pan-pan" style="float: right; height: 30px; margin: 5px;">Pan x 3</button>
+    <button id="btn-pan-zoom" style="float: right; height: 30px; margin: 5px;">Zoom + Pan</button>
+    <button id="btn-zoom-once" style="float: right; height: 30px; margin: 5px;">Zoom Out Once</button>
+    <button id="btn-pan-once" style="float: right; height: 30px; margin: 5px;">Pan Once</button>
+</div>
+<div id="viewDiv"></div>
+</body>
+</html>

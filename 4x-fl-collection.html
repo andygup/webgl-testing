@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <!-- 
+    FOR TESTING ONLY
+  -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Add Graphics Test</title>
+
+  <link rel="stylesheet" href="https://js.arcgis.com/4.12/esri/themes/light/main.css" />
+  <script src="https://js.arcgis.com/4.12/"></script>
+
+  <style>
+    html,
+    body,
+    #viewDiv {
+      padding: 0;
+      margin: 0;
+      height: 100%;
+      width: 100%;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+  </style>
+
+  <script>
+    require([
+      "esri/Map",
+      "esri/core/watchUtils",
+      "esri/geometry/support/webMercatorUtils",
+      "esri/layers/GraphicsLayer",
+      "esri/views/MapView",
+      "esri/layers/FeatureLayer",
+      "esri/geometry/geometryEngine"
+    ], function (
+      Map,
+      watchUtils,
+      webMercatorUtils,
+      GraphicsLayer,
+      MapView,
+      FeatureLayer,
+      GeometryEngine
+    ) {
+
+        const UPDATE_TIMER = 1500; // number of milliseconds delay before querying the layer
+
+        let killfps = 0, fps = 0, times = [], average = [], minFps = 0, maxFps = 0;
+        let requestAnimation = null;
+        let divFPS = document.getElementById("div-fps");
+        let divZoom = document.getElementById("div-zoom-level");
+        let divSymbolSize = document.getElementById("div-symbol-size");
+        let map = null, featureLayer = null, localLayerView = null;
+
+        let simpleMarkerRenderer = {
+          type: "simple",  // autocasts as new SimpleRenderer()
+          symbol: {
+            type: "simple-marker",  // autocasts as new SimpleMarkerSymbol()
+            size: 6,
+            color: "black",
+            outline: {  // autocasts as new SimpleLineSymbol()
+              width: 0.5,
+              color: "white"
+            }
+          }
+        };
+
+        function buildFeatureLayer(){
+
+          // Build a default array of graphics to help visually verify the layer loads
+          const graphicsArray = [
+            {
+              geometry: webMercatorUtils.geographicToWebMercator({
+                // Los Angeles
+                x: -118.2437,
+                y: 34.0522,
+                type: "point",
+                spatialReference: {
+                  wkid: 4326
+                }
+              })
+            },
+            {
+              geometry: webMercatorUtils.geographicToWebMercator({
+                // Dallas
+                x: -96.797,
+                y: 32.7767,
+                type: "point",
+                spatialReference: {
+                  wkid: 4326
+                }
+              })
+            },
+            {
+              geometry: webMercatorUtils.geographicToWebMercator({
+                // Denver
+                x: -104.9903,
+                y: 39.7392,
+                type: "point",
+                spatialReference: {
+                  wkid: 4326
+                }
+              })
+            },
+            {
+              geometry: webMercatorUtils.geographicToWebMercator({
+                // New York
+                x: -74.006,
+                y: 40.7128,
+                type: "point",
+                spatialReference: {
+                  wkid: 4326
+                }
+              })
+            }
+          ]
+
+          featureLayer = new FeatureLayer({
+            fields: [
+              {
+                name: "ObjectID",
+                alias: "ObjectID",
+                type: "oid"
+              }, {
+                name: "type",
+                alias: "Type",
+                type: "string"
+              }],
+            objectIdField: "ObjectID",
+            geometryType: "point",
+            spatialReference: view.spatialReference,
+            source: graphicsArray, 
+            renderer: simpleMarkerRenderer  
+          });
+
+          return featureLayer;
+        }
+
+        map = new Map({
+          basemap: "streets-night-vector",
+        });
+
+        let view = new MapView({
+          container: "viewDiv",
+          map: map,
+          center: [40, 0.0],
+          zoom: 1
+        });
+
+        view.when(() => {
+          view.watch("updating", function (value) {
+            if (!value) {
+              divZoom.innerText = "Zoom: " + view.zoom;              
+            }
+          });
+        });
+
+        document.getElementById("btn-add-flayer").addEventListener("click", () => {
+
+          if(featureLayer == null){
+            const layer = buildFeatureLayer();
+
+            map.add(layer);
+
+            view.whenLayerView(layer).then((layerView) => {
+
+              let timeoutID = null;
+              let time1 = null;
+              localLayerView = layerView;
+
+              layerView.watch("updating", (value) => {
+                if (!value) {
+                  console.log("FeatureLayer update complete: " + (performance.now() - time1).toFixed(0) + "ms");
+
+                  // Debounce the queryFeatures() method. No need for it to fire continuously when dealing with
+                  // tens of thousands or hundreds of thousands of points.
+                  timeoutID = window.setTimeout(() => {
+                    layerView.queryFeatures()
+                      .then((result) => {
+                        console.log("Update + query + debounce complete: " + (performance.now() - time1).toFixed(0) + "ms");
+                        document.getElementById("div-number-graphics").innerText = "Graphics in layer: " + result.features.length;
+                        document.getElementById("div-number-graphics-in-extent").innerText = "Graphics in extent: " + graphicsCountInExtent(result.features);
+                      });
+                  }, UPDATE_TIMER);
+
+                }
+                else {
+                  if (timeoutID) {
+                    window.clearTimeout(timeoutID);
+                  }
+
+                  time1 = performance.now();
+                  console.log("FeatureLayer updating");
+                }
+              });
+            });
+
+            fpsRefreshLoop();
+          }
+          else {
+            console.log("FeatureLayer already added.");
+          }
+        });
+
+        document.getElementById("btn-add").addEventListener("click", () => {
+          if (featureLayer !== null) {
+            const element = document.getElementById("select-1");
+            const value = element.options[element.selectedIndex].value;         
+
+            generateRandomPoints(value);
+          }
+          else {
+            console.warn("Be sure to Add FeatureLayer first.");
+          }
+        });
+
+        document.getElementById("slider-1").addEventListener("input", (c) => {
+          if(featureLayer){
+            simpleMarkerRenderer.symbol.size = c.target.value;
+            featureLayer.renderer = simpleMarkerRenderer;
+            divSymbolSize.innerText = "Size: " + c.target.value;
+          }
+          else {
+            console.warn("Be sure to Add FeatureLayer first.");
+          }
+        });
+
+        function generateRandomPoints(numberPts) {
+
+          let graphics = [];
+          let OID = 1;
+
+          for (let x = 0; x < numberPts; x++) {
+
+            const point2 =  {
+              type: "point",
+              x: Math.floor(Math.random() * (20037508 - -20037508 + 1)) - 20037508,
+              y: Math.floor(Math.random() * (20037508 - -20037508 + 1)) - 20037508,
+              spatialReference: view.spatialReference
+            };
+
+            const graphic = {
+              geometry: point2,
+              attributes: {
+                ObjectID: OID++,
+                type: "test"
+              },
+              spatialReference: view.spatialReference
+            };
+            graphics.push(graphic);
+          }
+
+          featureLayer.applyEdits({
+            addFeatures: graphics
+          })
+          .then((e) => {
+            // console.log(e);)
+            console.log("Length " + featureLayer.source.length);
+          });
+        }
+
+        function getGraphicSize() {
+          let element = document.getElementById("select-size");
+          return element.options[element.selectedIndex].value;
+        }
+
+        function fpsRefreshLoop() {
+          if (killfps === 0) {
+            requestAnimation = window.requestAnimationFrame(() => {
+              const now = performance.now();
+              while (times.length > 0 && times[0] <= now - 1000) {
+                times.shift();
+              }
+              times.push(now);
+              fps = times.length;
+              divFPS.innerText = "fps: " + averageFps(fps) + "/" + maxFps + "/" + minFps;
+              fpsRefreshLoop();
+            });
+          }
+        }
+
+        function averageFps(v) {
+          if (average.length > 60) {
+            average.pop();
+          }
+
+          average.unshift(v);
+
+          let sum = average.reduce( (sum, value) => {
+            return sum + value;
+          }, 0);
+
+          const avg = sum / average.length;
+
+          minFps = Math.min.apply(null, average);
+          maxFps = Math.max.apply(null, average);
+
+          return isNaN(avg) ? 0 : Math.round(avg);
+        }
+
+        function graphicsCountInExtent(features) {
+          let count = 0;
+          features.forEach((feature) => {
+
+            if (GeometryEngine.contains(view.extent, feature.geometry)) {
+              count++;
+            };
+          });
+
+          return count;
+        }
+      });
+  </script>
+</head>
+
+<body>
+  <div style="float: right;">
+    <div id="div-fps" style="float: right; padding: 10px; padding-right: 20px;">fps: 0</div>
+    <div id="div-number-graphics-in-extent" style="float: right; padding: 10px;">Graphics in extent: 0</div>
+    <div id="div-number-graphics" style="float: right; padding: 10px;">Graphics in layer: 0</div>
+    <div id="div-zoom-level" style="float: right; padding: 10px;">Zoom: 0</div>
+    <div style="padding-right: 20px;">
+      <button id="btn-add" style="float: right; height: 30px; margin: 5px;">Add Graphics</button>
+      <button id="btn-add-flayer" style="float: right; height: 30px; margin: 5px;">Add FeatureLayer</button>
+    </div>
+  </div>
+  <div style="float: left;">
+    <div style="padding: 10px;"> Increment
+      <select id="select-1">
+        <option value="100">100</option>
+        <option selected="selected" value="1000">1,000</option>
+        <option value="5000">5,000</option>
+        <option value="10000">10,000</option>
+        <option value="50000">50,000</option>
+        <option value="100000">100,000</option>
+      </select>
+    </div>
+    <div id="sliderContainer" style="padding: 10px; width: 210px;">
+      <input id="slider-1" type="range" min="2" max="20" value="4" step="1">
+      <div id="div-symbol-size" style="float: right; padding-left: 10px;">Size: 4</div>
+    </div>
+  </div>
+  <div id="viewDiv"></div>
+</body>
+
+</html>

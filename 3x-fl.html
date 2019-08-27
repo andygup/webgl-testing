@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <title>FeatureLayer</title>
+
+    <link rel="stylesheet" href="https://js.arcgis.com/3.28/esri/css/esri.css">
+
+    <script>
+      var dojoConfig = {
+        has: {
+          "esri-featurelayer-webgl": 1
+        }
+      };
+    </script>
+    <script src="https://js.arcgis.com/3.28/"></script>
+
+    <style>
+        html, body, #map {
+            padding: 0;
+            margin: 0;
+            height: 100%;
+            width: 100%;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        body {
+            background-color: lightgray;
+        }
+
+    </style>
+
+    <script>
+
+      let extentCountDiv = null;
+      let numberGraphicsDiv = null;
+      let zoomDiv = null;
+      let testResultDiv = null;
+      let flUpdateResultDiv = null;
+
+      let killfps = 0, fps = 0, times = [], average = [], minFps = 0, maxFps = 0;
+      let requestAnimation = null, divFPS = null;
+
+      // Run timer on a background thread
+      let timerWorker = new Worker('./js/timer-worker.js');
+
+      require([
+          "esri/map",
+          "esri/geometry/Point",
+          "esri/layers/FeatureLayer",
+          "esri/geometry/geometryEngine"
+        ],
+        function(
+          Map,
+          Point,
+          FeatureLayer,
+          geometryEngine
+        ) {
+
+          let map = new Map("map", {
+            basemap: "streets-night-vector",
+            center: [-82.44109, 35.6122],
+            zoom: 10
+          });
+
+          map.on("load", mapLoaded);
+
+          let featureLayer = new FeatureLayer("https://services.arcgis.com/uCXeTVveQzP4IIcx/arcgis/rest/services/POI/FeatureServer/0");
+
+          updateEndHandler(performance.now());
+
+          map.on("layers-add-result", () => {
+
+            const webGL = featureLayer.hasWebGLSurface();
+            let div = document.getElementById("div-webgl-check");
+
+            if(webGL){
+              div.style.background = "green";
+            }
+            else {
+              div.style.background = "yellow";
+            }
+            div.innerText = "WebGL: " + webGL;
+
+            updateInfoDivs();
+          });
+
+          map.addLayers([featureLayer]);
+
+          function mapLoaded(){
+            extentCountDiv = document.getElementById("div-number-graphics-in-extent");
+            numberGraphicsDiv = document.getElementById("div-number-graphics");
+            zoomDiv = document.getElementById("div-zoom-level");
+            divFPS = document.getElementById("div-fps");
+            testResultDiv = document.getElementById("div-test-result");
+            flUpdateResultDiv = document.getElementById("div-fl-update-result");
+
+            document.getElementById("btn-pan-once").addEventListener("click", () => {
+              const time0 = performance.now();
+              updateEndHandler(time0);
+              map.panLeft().then(() => {
+                updateTestResultDiv(time0);
+              });
+            });
+
+            document.getElementById("btn-zoom-once").addEventListener("click", () => {
+              const time0 = performance.now();
+              updateEndHandler(time0);
+              map.setZoom(map.getZoom() - 1).then(() => {
+                updateTestResultDiv(time0);
+              });
+            });
+
+            document.getElementById("btn-reset").addEventListener("click", () => {
+              const time0 = performance.now();
+              updateEndHandler(time0);
+              map.centerAndZoom(new Point(-82.44109, 35.6122), 10)
+                .then(() => {
+                  updateInfoDivs();
+                });
+            });
+
+            document.getElementById("btn-pan-zoom").addEventListener("click", () => {
+              runPanZoomNavigationPath();
+            });
+
+            document.getElementById("btn-pan-pan").addEventListener("click", () => {
+              runPanNavigationPath();
+            });
+
+            document.getElementById("btn-disable-webgl").addEventListener("click", (m) => {
+
+              if(testResultDiv && flUpdateResultDiv){
+                testResultDiv.innerText = "Pan/Zoom: --";
+                flUpdateResultDiv.innerText = "FL update: --";
+              }
+
+              updateEndHandler(performance.now());
+
+              if(m.target.innerText === "Disable WebGL") {
+                featureLayer.setWebGLEnabled(false);
+                m.target.innerText = "Enabled WebGL";
+              }
+              else {
+                featureLayer.setWebGLEnabled(true);
+                m.target.innerText = "Disable WebGL";
+              }
+
+            });
+
+            timerWorker.postMessage(["start", 1000]);
+            timerWorker.onmessage = (msg) => {
+                minmaxSnapshot(average);
+            };
+
+            map.on("extent-change", handleExtentChange);
+
+            fpsRefreshLoop();
+          }
+
+          function updateEndHandler(time0) {
+
+            if(testResultDiv && flUpdateResultDiv){
+              testResultDiv.innerText = "Pan/Zoom: --";
+              flUpdateResultDiv.innerText = "FL update: --";
+            }
+
+            let signal = featureLayer.on("update-end", () => {
+              const webGL = featureLayer.hasWebGLSurface();
+              const div = document.getElementById("div-webgl-check");
+
+              if(webGL){
+                div.style.background = "green";
+              }
+              else {
+                div.style.background = "yellow"
+              }
+              div.innerText = "WebGL: " + webGL;
+
+              updateInfoDivs();
+
+              flUpdateResultDiv.innerText = "FL update: " + (performance.now() - time0).toFixed(0) + "ms";
+
+              signal.remove();
+            });
+          }
+
+          function handleExtentChange(){
+            if (featureLayer) {
+                updateInfoDivs();
+            }
+          }
+
+          function updateTestResultDiv(time0){
+            testResultDiv.innerText = "Pan/Zoom: " + (performance.now() - time0).toFixed(0) + "ms";
+          }
+
+          function updateInfoDivs(){
+            extentCountDiv.innerText = "Graphics in extent: " + graphicsCountInExtent(featureLayer.graphics, map.extent);
+            numberGraphicsDiv.innerText = "Graphics count: " + featureLayer.graphics.length;
+            zoomDiv.innerText = "Zoom: " + map.getZoom();
+          }
+
+          function runPanNavigationPath(){
+            const time0 = performance.now();
+            updateEndHandler(time0);
+            map.panLowerLeft().then(() => {
+              map.panUp().then(() => {
+                map.panRight().then(() => {
+                  updateTestResultDiv(time0);
+                });
+              });
+            })
+          }
+
+          function runPanZoomNavigationPath(){
+            const time0 = performance.now();
+            updateEndHandler(time0);
+            map.setZoom(map.getZoom() - 1).then(() => {
+              map.panLowerLeft().then(() => {
+                map.panUp().then(() => {
+                  map.panRight().then(() => {
+                    updateTestResultDiv(time0);
+                  });
+                });
+              })
+            })
+          }
+
+          function fpsRefreshLoop() {
+            if (killfps === 0) {
+              requestAnimation = window.requestAnimationFrame(() => {
+                const now = performance.now();
+                while (times.length > 0 && times[0] <= now - 1000) {
+                  times.shift();
+                }
+                times.push(now);
+                fps = times.length;
+                divFPS.innerText = "fps: " + averageFps(fps) + "/" + maxFps + "/" + minFps;
+                fpsRefreshLoop();
+              });
+            }
+          }
+
+          function averageFps(v) {
+            if (average.length > 60) {
+              average.pop();
+            }
+
+            average.unshift(v);
+
+            let sum = average.reduce(function (sum, value) {
+              return sum + value;
+            }, 0);
+
+            const avg = sum / average.length;
+
+            return isNaN(avg) ? 0 : Math.round(avg);
+          }
+
+          function minmaxSnapshot(average) {
+            minFps = Math.min.apply(null, average);
+            maxFps = Math.max.apply(null, average);
+          }
+
+          function graphicsCountInExtent(graphics, extent) {
+            let count = 0;
+
+            const extentArray = extent.normalize();
+
+            graphics.forEach((graphic) => {
+
+              if (geometryEngine.contains(extentArray[0], graphic.geometry)) {
+                count++;
+              }
+
+              if(extentArray.length > 1 && geometryEngine.contains(extentArray[1], graphic.geometry)) {
+                count++;
+              }
+            });
+
+            return count;
+          }
+
+        });
+    </script>
+</head>
+
+<body>
+<div id="header" style="height: 40px;">
+    <div id="div-number-graphics-in-extent" style="float: right; padding: 10px;">Graphics in extent: 0</div>
+    <div id="div-number-graphics" style="float: right; padding: 10px;">Graphics count: 0</div>
+    <div id="div-zoom-level" style="float: right; padding: 10px;">Zoom: 0</div>
+    <div id="div-webgl-check" style="float: left; padding: 10px;">WebGL: false</div>
+</div>
+<div id="header2" style="height: 40px;">
+    <div id="div-test-result" style="float: left; padding: 10px;">Pan/zoom: --</div>
+    <div id="div-fl-update-result" style="float: left; padding: 10px;">FL update: --</div>
+    <div id="div-fps" style="float: left; padding: 10px;">FL update: --</div>
+    <button id="btn-reset" style="float: right; height: 30px; margin: 5px;">Reset Map</button>
+    <button id="btn-disable-webgl" style="float: right; height: 30px; margin: 5px;">Disable WebGL</button>
+    <button id="btn-pan-zoom" style="float: right; height: 30px; margin: 5px;">Zoom + Pan</button>
+    <button id="btn-pan-pan" style="float: right; height: 30px; margin: 5px;">Pan x 3</button>
+    <button id="btn-zoom-once" style="float: right; height: 30px; margin: 5px;">Zoom Out Once</button>
+    <button id="btn-pan-once" style="float: right; height: 30px; margin: 5px;">Pan Once</button>
+</div>
+<div id="map"></div>
+</body>
+
+</html>

@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta
+            name="viewport"
+            content="initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <title>Large Layer</title>
+    <style>
+        html,
+        body,
+        #viewDiv {
+            padding: 0;
+            margin: 0;
+            height: 100%;
+            width: 100%;
+        }
+        td {
+            font-family: Arial, Helvetica, sans-serif;
+        }
+        body {
+            background-color: lightgray;
+        }
+        #header {
+            height: 80px;
+        }
+        #elapsed-time {
+            /*float: left;*/
+            padding: 10px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 40px;
+        }
+        #extent-count {
+            /*float: right;*/
+            padding: 10px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 40px;
+        }
+        #zoom-level {
+            padding: 10px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 40px;
+        }
+
+        #btn-bar {
+            height: 20px;
+            position: absolute;
+            bottom: 20px;
+            width: 100%;
+            z-index: 20;
+        }
+
+        .btn-1 {
+            float: left;
+            width: 25%;
+            height: 40px;
+            background-color: white;
+        }
+    </style>
+
+    <link
+            rel="stylesheet"
+            href="https://js.arcgis.com/4.12/esri/themes/light/main.css"
+    />
+    <script src="https://js.arcgis.com/4.12/"></script>
+
+    <script>
+
+      let elapsedTimeDiv, extentCountDiv, zoomDiv, addAllBtn, addSomeBtn, addExpressionBtn, clearBtn;
+
+      const localStorageKey = "webgl";
+
+
+      if(window.localStorage.getItem(localStorageKey) === null){
+        window.localStorage.setItem(localStorageKey,"0|0|*||"); // "elapsed time in ms, counter, outfields, definition expression"
+        console.log("split ", window.localStorage.getItem(localStorageKey).split("|"))
+      }
+
+      console.log("test 1 ", window.localStorage.getItem(localStorageKey));
+
+      require([
+          "esri/Map",
+          "esri/views/MapView",
+          "esri/tasks/support/Query",
+          "esri/layers/FeatureLayer"],
+
+        function(Map, MapView, Query, FeatureLayer) {
+          let map = new Map({
+            basemap: "streets-night-vector"
+          });
+
+          let view = new MapView({
+            container: "viewDiv",
+            map: map,
+            zoom: 6,
+            center: [-82.44109, 35.6122] // longitude, latitude
+          });
+
+          const splitVal = window.localStorage.getItem(localStorageKey).split("|");
+          console.log('splitval', splitVal[2]);
+          let finalVal = [];
+
+          if(splitVal[2] === "*"){
+            finalVal.push(splitVal[2].toString());
+          }
+          else {
+            const tempVal = splitVal[2].split(',');
+            finalVal.push(tempVal[0],tempVal[1],tempVal[2],tempVal[3]);
+          }
+
+          if(splitVal[3] !== ''){
+
+          }
+
+          let featureLayer = new FeatureLayer({
+            url: "https://services.arcgis.com/uCXeTVveQzP4IIcx/arcgis/rest/services/POI/FeatureServer/0",
+            outFields: finalVal,
+            definitionExpression: splitVal[3].toString()
+          });
+
+          map.add(featureLayer);
+
+          view.when(() => {
+
+            elapsedTimeDiv = document.getElementById("elapsed-time");
+            extentCountDiv = document.getElementById("extent-count");
+            zoomDiv = document.getElementById("zoom-level");
+
+            createExpandWidget();
+            zoomDiv.innerText = view.zoom.toFixed(0);
+
+
+            view.whenLayerView(featureLayer).then(function(layerView){
+              let time1 = null;
+
+              view.watch("zoom", (e) => {
+                zoomDiv.innerText = view.zoom.toFixed(0);
+              });
+
+              layerView.watch("updating", function(value){
+
+                if(!value) {
+                  if(featureLayer) {
+
+                    const elapseTime = Math.round((performance.now() - time1));
+                    const time = (Number.parseInt(splitVal[0]) + elapseTime);
+                    const counter = (Number.parseInt(splitVal[1]) + 1);
+
+                    // window.localStorage.setItem(localStorageKey, time.toString() + "," + counter.toString());
+                    recreateLocalStorage(time.toString(), counter.toString());
+                    console.log("test all", window.localStorage.getItem(localStorageKey));
+                    console.log('average ', (time / counter).toFixed(0));
+
+                    elapsedTimeDiv.innerText = elapseTime.toFixed(0) + "ms";
+
+                    console.log("FL finished updating");
+
+                    graphicsCountInExtent(view.extent.clone(), (count) => {
+                      extentCountDiv.innerText = count;
+                    });
+                  }
+                }
+                else {
+                  console.log("FL updating");
+                  time1 = performance.now();
+                  elapsedTimeDiv.innerText = "- - -";
+                  extentCountDiv.innerText = "- - -";
+                }
+
+              });
+            });
+          });
+
+          function recreateLocalStorage(timeString, counterString){
+            const tempVal = window.localStorage.getItem(localStorageKey).split("|");
+            const finalVal = timeString + "|" + counterString + "|" + tempVal[2] + "|" + tempVal[3] + "|";
+            window.localStorage.setItem(localStorageKey, finalVal);
+          }
+
+          function createExpandWidget() {
+
+            clearBtn = document.getElementById("btn-clear");
+
+            // To use - first load app => Click this button => reload app + repeat
+            clearBtn.addEventListener("click", () => {
+
+
+              layerView.watch("updating", function(value){
+                if(!value) {
+                  window.localStorage.setItem(localStorageKey,"0|0|*||");
+                  console.log("Clear localStorage ", window.localStorage.getItem(localStorageKey));
+                }
+                else {
+                  console.log("Layer still active - wait until FL finished updating");
+                }
+              });
+
+            });
+
+            // To use - first load app => Click this button => reload app + repeat
+            addAllBtn = document.getElementById("btn-all");
+            addAllBtn.addEventListener("click", () => {
+              console.log("ALL");
+
+              window.localStorage.setItem(localStorageKey,"0|0|*||"); // "elapsed time in ms, counter, outfields, definition expression"
+
+              addAllBtn.style.backgroundColor = "red";
+              addSomeBtn.style.backgroundColor = "white";
+              addExpressionBtn.style.backgroundColor = "white";
+
+              location.reload(true);
+            });
+
+            // To use - first load app => Click this button => reload app + repeat
+            addSomeBtn = document.getElementById("btn-some");
+            addSomeBtn.addEventListener("click", () => {
+              console.log("SOME");
+
+              window.localStorage.setItem(localStorageKey,"0|0|NAME,ADDRESS,CITY,STATE|"); // "elapsed time in ms, counter, outfields, definition expression"
+
+              addSomeBtn.style.backgroundColor = "red";
+              addAllBtn.style.backgroundColor = "white";
+              addExpressionBtn.style.backgroundColor = "white";
+
+              location.reload(true);
+            });
+
+            // To use - first load app => Click this button => reload app + repeat
+            addExpressionBtn = document.getElementById("btn-expression");
+            addExpressionBtn.addEventListener("click", () => {
+              console.log("SOME + Definition Expression");
+
+              window.localStorage.setItem(localStorageKey,"0|0|NAME,ADDRESS,CITY,STATE|STATE = 'North Carolina'"); // "elapsed time in ms, counter, outfields, definition expression"
+
+              addExpressionBtn.style.backgroundColor = "red";
+              addSomeBtn.style.backgroundColor = "white";
+              addAllBtn.style.backgroundColor = "white";
+
+              location.reload(true);
+            });
+
+          }
+
+          function graphicsCountInExtent(extent, callback) {
+            const extentArray = extent.normalize();
+
+            let query = new Query();
+            query.geometry = extentArray[0];
+            query.spatialRelationship = "contains";
+
+            view.whenLayerView(featureLayer).then(function(layerView){
+              layerView.queryFeatures(query).then(function(results) {
+                callback(results.features.length);
+              });
+            });
+          }
+
+        });
+    </script>
+</head>
+
+<body>
+<div id="btn-bar">
+    <button class="btn-1" id='btn-all'>Add ALL</button>
+    <button class="btn-1" id='btn-some'>Add SOME</button>
+    <button class="btn-1" id='btn-expression'>Add DE</button>
+    <button class="btn-1" id='btn-clear'>Clear</button>
+</div>
+<div id="header">
+    <table style="width: 100%">
+        <tr>
+            <td>Time</td>
+            <td>Graphics</td>
+            <td>Zoom</td>
+        </tr>
+        <tr>
+            <td><div id="elapsed-time">- - -</div></td>
+            <td><div id="extent-count">- - -</div></td>
+            <td><div id="zoom-level"></div></td>
+        </tr>
+    </table>
+</div>
+<div id="viewDiv">
+</div>
+</body>
+</html>

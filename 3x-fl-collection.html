@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="initial-scale=1, maximum-scale=1,user-scalable=no"/>
+    <title>Simple Map</title>
+    <link rel="stylesheet" href="https://js.arcgis.com/3.28/esri/css/esri.css">
+    <!-- <link href="./c3/c3.css" rel="stylesheet"> -->
+    <style>
+        html, body, #map {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, Helvetica, sans-serif;
+        }
+
+        body {
+            background-color: lightgray;
+        }
+
+    </style>
+
+    <script>
+      let dojoConfig = {
+        has: {
+          "esri-featurelayer-webgl": 1
+        }
+      };
+    </script>
+
+    <script src="https://js.arcgis.com/3.28/"></script>
+    <script>
+      let map;
+
+      let killfps = 0, fps = 0, times = [], average = [], minFps = 0, maxFps = 0;
+      let requestAnimation = null, divFPS = null;
+      let featureLayer = null;
+
+      let iconPath = "M10,1.375c-3.17,0-5.75,2.548-5.75,5.682c0,6.685,5.259,11.276,5.483,11.469c0.152,0.132,0.382,0.132,0.534,0c0.224-0.193,5.481-4.784,5.483-11.469C15.75,3.923,13.171,1.375,10,1.375 M10,17.653c-1.064-1.024-4.929-5.127-4.929-10.596c0-2.68,2.212-4.861,4.929-4.861s4.929,2.181,4.929,4.861C14.927,12.518,11.063,16.627,10,17.653 M10,3.839c-1.815,0-3.286,1.47-3.286,3.286s1.47,3.286,3.286,3.286s3.286-1.47,3.286-3.286S11.815,3.839,10,3.839 M10,9.589c-1.359,0-2.464-1.105-2.464-2.464S8.641,4.661,10,4.661s2.464,1.105,2.464,2.464S11.359,9.589,10,9.589";
+      let initColor = "#ce641d";
+      let extentCountDiv = null;
+      let numberGraphicsDiv = null;
+      let zoomDiv = null;
+
+      let timerWorker = new Worker('./js/timer-worker.js');
+
+      require(["esri/map", "esri/graphic", "dojo/on", "esri/geometry/geometryEngine", "esri/geometry/webMercatorUtils",
+          "esri/geometry/Point", "esri/symbols/SimpleMarkerSymbol", "esri/SpatialReference", "esri/layers/FeatureLayer",
+          "esri/tasks/FeatureSet"],
+        function (Map, Graphic, on, geometryEngine, webMercatorUtils, Point, SimpleMarkerSymbol, SpatialReference, FeatureLayer, FeatureSet) {
+
+          map = new Map("map", {
+            basemap: "streets-night-vector",  //For full list of pre-defined basemaps, navigate to http://arcg.is/1JVo6Wd
+            center: [19.82, 0.0], // longitude, latitude
+            zoom: 1
+          });
+
+          map.on("load", mapLoaded);
+
+          map.on("extent-change", handleExtentChange);
+
+          function mapLoaded() {
+            extentCountDiv = document.getElementById("div-number-graphics-in-extent");
+            numberGraphicsDiv = document.getElementById("div-number-graphics");
+            zoomDiv = document.getElementById("div-zoom-level");
+
+            zoomDiv.innerText = "Zoom: " + map.getZoom();
+
+            timerWorker.postMessage(["start", 10000]);
+            timerWorker.onmessage = (msg) => {
+              minFps = 0;
+              maxFps = 0;
+            };
+
+            let layerDefinition = {
+              "objectIdField": "ID",
+              "geometryType": "esriGeometryPoint",
+              "fields": [{
+                "name": "ID",
+                "type": "esriFieldTypeInteger",
+                "alias": "ID"
+              }]
+            };
+
+            document.getElementById("btn-pan").addEventListener("click", () => {
+              map.panLeft();
+            });
+
+            document.getElementById("btn-add").addEventListener("click", () => {
+              if (map.graphics !== null) {
+                let element = document.getElementById("select-1");
+                const value = element.options[element.selectedIndex].value;
+                generateRandomPoints(value);
+              }
+            });
+
+            document.getElementById("btn-clear").addEventListener("click", () => {
+              if (featureLayer !== null) {
+                featureLayer.clear();
+                if (extentCountDiv !== null && numberGraphicsDiv !== null) {
+                  extentCountDiv.innerText = "Graphics in extent: 0";
+                  numberGraphicsDiv.innerText = "Graphics count: 0";
+                }
+              }
+            });
+
+            divFPS = document.getElementById("div-fps");
+
+            let graphic = new Graphic(new Point([19.82, 41.33]), createSymbol(iconPath, initColor));
+            // map.graphics.add(graphic);
+
+            const sms = new SimpleMarkerSymbol();
+            sms.setStyle(SimpleMarkerSymbol.STYLE_DIAMOND, 20);
+            sms.setAngle(0);
+
+            let graphic2 = new Graphic(new Point([19.82, 41.33]), sms);
+            graphic2.setAttributes({
+              ID: 1
+            });
+
+
+            let featureCollection = {
+              layerDefinition: layerDefinition,
+              featureSet: {
+                "features": [],
+                "geometryType": "esriGeometryPoint"
+              }
+            };
+
+            featureLayer = new FeatureLayer(featureCollection, {
+              id: 'test1'
+            });
+
+            map.on("layers-add-result", function (r) {
+
+              // No WebGL support for featureCollections :-(
+              console.log("featureLayer.hasWebGLSurface", featureLayer.hasWebGLSurface());
+
+              featureLayer.applyEdits([graphic2], null, null);
+
+              const webGL = featureLayer.hasWebGLSurface();
+              const div = document.getElementById("div-webgl-check");
+
+              if(webGL){
+                div.style.background = "green";
+              }
+              else {
+                div.style.background = "yellow";
+              }
+              div.innerText = "WebGL: " + webGL
+            });
+
+            map.addLayers([featureLayer]);
+
+            fpsRefreshLoop();
+          }
+
+          function handleExtentChange(e) {
+
+            if (featureLayer) {
+              extentCountDiv.innerText = "Graphics in extent: " + graphicsCountInExtent(featureLayer.graphics, e.extent);
+              zoomDiv.innerText = "Zoom: " + map.getZoom();
+            }
+          }
+
+          async function generateRandomPoints(numberPts) {
+
+            for (let x = 0; x < numberPts; x++) {
+
+              let graphic = new Graphic(new Point([Math.floor(Math.random() * (40075016 - -20037508 + 1)) - 20037508, Math.floor(Math.random() * (20037508 - -20037508 + 1)) - 20037508], new SpatialReference({wkid: 3857})), createSymbol(iconPath, initColor));
+              featureLayer.applyEdits([graphic], null, null);
+
+              if (x === numberPts - 1) {
+                console.log("points ", numberPts);
+                numberGraphicsDiv.innerText = "Graphics count: " + featureLayer.graphics.length;
+                extentCountDiv.innerText = "Graphics in extent: " + graphicsCountInExtent(featureLayer.graphics, map.extent);
+              }
+
+            }
+          }
+
+          function createSymbol(path, color) {
+            let markerSymbol = new esri.symbol.SimpleMarkerSymbol();
+            markerSymbol.setPath(path);
+            markerSymbol.setColor(new dojo.Color(color));
+            markerSymbol.setOutline(null);
+            return markerSymbol;
+          }
+
+          function fpsRefreshLoop() {
+            if (killfps === 0) {
+              requestAnimation = window.requestAnimationFrame(() => {
+                const now = performance.now();
+                while (times.length > 0 && times[0] <= now - 1000) {
+                  times.shift();
+                }
+                times.push(now);
+                fps = times.length;
+                divFPS.innerText = "fps = " + averageFps(fps) + "/" + maxFps + "/" + minFps;
+                fpsRefreshLoop();
+              });
+            }
+          }
+
+          function averageFps(v) {
+            if (average.length > 60) {
+              average.pop();
+            }
+
+            average.unshift(v);
+
+            let sum = average.reduce(function (sum, value) {
+              return sum + value;
+            }, 0);
+
+            const avg = sum / average.length;
+
+            minFps = Math.min.apply(null, average);
+            maxFps = Math.max.apply(null, average);
+
+            return isNaN(avg) ? 0 : Math.round(avg);
+          }
+
+          function graphicsCountInExtent(graphics, extent) {
+            let count = 0;
+
+            const extentArray = extent.normalize();
+
+            graphics.forEach((graphic) => {
+
+              if (geometryEngine.contains(extentArray[0], graphic.geometry)) {
+                count++;
+              }
+
+              if(extentArray.length > 1 && geometryEngine.contains(extentArray[1], graphic.geometry)) {
+                count++;
+              }
+            });
+
+            return count;
+          }
+
+          // check for webgl https://codepen.io/bsvensson/pen/YMxpYd?editors=1000
+
+        });
+    </script>
+</head>
+
+<body>
+<div id="header" style="height: 40px;">
+    <button id="btn-clear" style="float: right; height: 30px; margin: 5px;">Clear All</button>
+    <button id="btn-pan" style="float: right; height: 30px; margin: 5px;">Pan</button>
+    <button id="btn-add" style="float: right; height: 30px; margin: 5px;">Add Graphics</button>
+    <div id="div-fps" style="float: right; padding: 10px;">fps = 0</div>
+    <div id="div-number-graphics-in-extent" style="float: right; padding: 10px;">Graphics in extent: 0</div>
+    <div id="div-number-graphics" style="float: right; padding: 10px;">Graphics count: 0</div>
+    <div id="div-zoom-level" style="float: right; padding: 10px;">Zoom: 0</div>
+    <div id="div-webgl-check" style="float: left; padding: 10px;">WebGL: false</div>
+    <div style="float:left; padding: 10px;"> Increment
+        <select id="select-1">
+            <option value="1000">1,000</option>
+            <option value="5000">5,000</option>
+            <option value="10000">10,000</option>
+            <option value="50000">50,000</option>
+            <option value="100000">100,000</option>
+        </select>
+    </div>
+</div>
+<div id="map"></div>
+</body>
+</html>
