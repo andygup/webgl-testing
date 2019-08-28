@@ -18,20 +18,20 @@
 * Download speeds - Testing feature service load times are heavily dependant on internet download speeds and these speeds can be highly variable. I suggest at least testing the download speed before running tests.
 
 ## Feature Collection Apps
-[`3x-fl-collection.html`](3x-fl-collection.html) - Add graphics in increments. No WebGL since it's using a feature collection. 
+[`3x-fl-collection.html`](https://andygup.github.io/webgl-testing/3x-fl-collection.html) - Add graphics in increments. No WebGL since it's using a feature collection. 
 
-[`4x-fl-collection.html`](4x-fl-collection.html) - WebGL - Add graphics in increments.
+[`4x-fl-collection.html`](https://andygup.github.io/webgl-testing/4x-fl-collection.html) - WebGL - Add graphics in increments.
 
 ## FeatureLayer with Feature Service Apps
 
-[`3x-fl.html`](3x-fl.html) - Run specific tests with or without WebGL.
+[`3x-fl.html`](https://andygup.github.io/webgl-testing/3x-fl.html) - Run specific tests with or without WebGL.
 
-[`4x-fl.html`](4x-fl.html) - Run specific tests. WebGL Only.
+[`4x-fl.html`](https://andygup.github.io/webgl-testing/4x-fl.html) - Run specific tests. WebGL Only.
 
-[`4x-fl-custom-renderer.html`](4x-fl-custom-renderer.html) - Run specific tests and use custom renderer
+[`4x-fl-custom-renderer.html`](https://andygup.github.io/webgl-testing/4x-fl-custom-renderer.html) - Run specific tests and use custom renderer
 
-[`4x-large-fl-load-test.html`](4x-large-fl-load-test.html) - Simply load a very loarge feature layer and measure the load time.
+[`4x-large-fl-load-test.html`](https://andygup.github.io/webgl-testing/4x-large-fl-load-test.html) - Simply load a very loarge feature layer and measure the load time.
 
 ## Graphics Layer Apps
 
-[`4x-custom-gl.html`](4x-custom-gl.html) - Custom graphics layer using blinking graphics.
+[`4x-custom-gl.html`](https://andygup.github.io/webgl-testing/4x-custom-gl.html) - Custom graphics layer using blinking graphics.
